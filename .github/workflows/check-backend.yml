@@ -1,0 +1,24 @@
+name: Check for changes between development and master in backend repository
+
+on:
+    pull_request:
+        branches:
+            - master
+
+env:
+    BRANCH_1: master
+    BRANCH_2: development
+
+jobs:
+    diff-branches:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v2
+              with:
+                  repository: Rukkor/geometra-server
+                  token: ${{ secrets.GH_PAT }}
+            - name: Run git diff between branches
+              run: |
+                  git fetch --depth=1 origin ${{ env.BRANCH_1 }}
+                  git fetch --depth=1 origin ${{ env.BRANCH_2 }}
+                  git diff --exit-code origin/${{ env.BRANCH_1 }}..origin/${{ env.BRANCH_2 }}

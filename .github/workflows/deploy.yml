@@ -1,0 +1,129 @@
+name: Deploy Geometra 4 Frontend
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Either 'dev' 'stage' or 'prod'"
+        required: true
+        type: string
+      cloudfront_id:
+        description: CloudFront distribution ID to invalidate
+        required: true
+        type: string
+      locize_project_id:
+        description: REACT_APP_LOCIZE_PROJECT_ID
+        required: true
+        type: string
+      locize_api_key:
+        description: REACT_APP_LOCIZE_API_KEY
+        required: true
+        type: string
+      react_app_version:
+        description: REACT_APP_VERSION
+        required: true
+        type: string
+      serverless_socket_url:
+        description: REACT_APP_FILE_V2_SOCKET_URL
+        required: true
+        type: string
+      react_app_node_url:
+        description: REACT_APP_NODE_URL
+        required: true
+        type: string
+      node_socket_reconnection_delay:
+        description: REACT_APP_NODE_SOCKET_RECONNECTION_DELAY
+        required: true
+        type: string
+      node_socket_reconnection_delay_max:
+        description: REACT_APP_NODE_SOCKET_RECONNECTION_DELAY_MAX
+        required: true
+        type: string
+      ifc_conversion_bucket_url:
+        description: REACT_APP_IFC_CONVERSION_BUCKET_URL
+        required: true
+        type: string
+      storage_bucket_url:
+        description: REACT_APP_BUCKET_URL
+        required: true
+        type: string
+      auth0_url:
+        description: REACT_APP_AUTH0_URL
+        required: true
+        type: string
+    secrets:
+      aws_access_key_id:
+        required: true
+      aws_secret_access_key:
+        required: true
+      gh_pat:
+        required: false
+
+jobs:
+  build-deploy:
+    env:
+      CI: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert environment input in 'dev' 'stage' or 'prod'
+        if: ${{ (inputs.environment != 'dev') && (inputs.environment != 'stage') && (inputs.environment != 'prod') }}
+        run: exit 1
+
+      - name: Checkout source code
+        uses: actions/checkout@v2
+
+      - name: Update Changelog (prod only)
+        if: ${{ inputs.environment == 'prod' }}
+        uses: ./.github/actions/update-changelog
+        with:
+          token: ${{ secrets.gh_pat }}
+          repository: Rukkor/geometra-antd
+          changelog_path: src/components/Header/components/ChangelogDialog/
+          git_user_name: rukkor-bot
+          git_user_email: gha.bot@rukkor.io
+
+      - name: Setup and cache node 12
+        uses: actions/setup-node@v2
+        with:
+          node-version: "12"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install # see: postinstall - copy-webviewer-files
+
+      - name: Build application
+        run: npm run-script build
+        env:
+          REACT_APP_LOCIZE_PROJECT_ID: ${{ inputs.locize_project_id }}
+          REACT_APP_LOCIZE_API_KEY: ${{ inputs.locize_api_key }}
+          REACT_APP_VERSION: ${{ inputs.react_app_version }}
+          REACT_APP_FILE_V2_SOCKET_URL: ${{ inputs.serverless_socket_url }}
+          REACT_APP_NODE_URL: ${{ inputs.react_app_node_url }}
+          REACT_APP_NODE_SOCKET_RECONNECTION_DELAY: ${{ inputs.node_socket_reconnection_delay }}
+          REACT_APP_NODE_SOCKET_RECONNECTION_DELAY_MAX: ${{ inputs.node_socket_reconnection_delay_max }}
+          REACT_APP_IFC_CONVERSION_BUCKET_URL: ${{ inputs.ifc_conversion_bucket_url }}
+          REACT_APP_BUCKET_URL: ${{ inputs.storage_bucket_url }}
+          REACT_APP_AUTH0_URL: ${{ inputs.auth0_url }}
+          GENERATE_SOURCEMAP: false
+
+      - name: Remove dist
+        run: rm -rf dist
+
+      - name: Move files for packaging
+        run: mv build dist -T
+
+      - name: Add version info file
+        run: echo "G4-${{ inputs.environment }}-${{ github.run_number }}-$(git rev-parse --short HEAD)${{ github.run_attempt != 1 && format('-{0}', github.run_attempt) || '' }}" > dist/buildinfo.txt
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.aws_access_key_id }}
+          aws-secret-access-key: ${{ secrets.aws_secret_access_key }}
+          aws-region: eu-west-1
+
+      - name: Deploy to S3
+        run: aws s3 sync --delete --no-progress dist/ s3://geometra-4-host-${{ inputs.environment }}/
+
+      - name: Invalidate CloudFront distribution
+        run: aws cloudfront create-invalidation --distribution-id ${{ inputs.cloudfront_id }} --paths '/*'

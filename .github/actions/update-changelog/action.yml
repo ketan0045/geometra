@@ -1,0 +1,52 @@
+name: Update Changelog
+description: Get latest release info, append at the beginning of CHANGELOG, push back to repository.
+
+inputs:
+  token:
+    required: true
+    description: Presonal Access Token with repository access
+  repository:
+    required: true
+    description: "Repository name in format `Organisation/repository-name`"
+  changelog_path:
+    required: true
+    description: Path containing CHANGELOG.md changelog-template.md files
+    default: "./"
+  git_user_name:
+    required: true
+    description: Who to show as author of the commit
+    default: github-actions[bot]
+  git_user_email:
+    required: true
+    description: GitHub user email
+    default: github-actions[bot]@users.noreply.github.com
+  branch:
+    required: true
+    description: What branch to commit to
+    default: master
+
+runs:
+  using: "composite"
+  steps:
+    - run: |
+        pushd ${{ inputs.changelog_path }}
+        curl \
+          -H "Authorization: token ${{ inputs.token }}" \
+          https://api.github.com/repos/${{ inputs.repository }}/releases/latest \
+          > changelog.json
+
+        CHANGELOG_TAG_NAME="$(jq -r ."tag_name" changelog.json)" \
+          CHANGELOG_BODY="$(jq -r ."body" changelog.json)" \
+          CHANGELOG_DATE="$(date --iso-8601)" \
+          envsubst < changelog-template.md > changelog-patched.md
+        cat changelog-patched.md CHANGELOG.md > tmp_changelog.md
+        cat tmp_changelog.md > CHANGELOG.md
+        rm changelog-patched.md tmp_changelog.md changelog.json
+        cat CHANGELOG.md
+
+        git config --global user.name "${{ inputs.git_user_name }}"
+        git config --global user.email "${{ inputs.git_user_email }}"
+        git commit CHANGELOG.md -m "[skip ci] update CHANGELOG"
+        git push https://${{ inputs.token }}@github.com/${{ inputs.repository }}.git HEAD:${{ inputs.branch }}
+        popd
+      shell: bash

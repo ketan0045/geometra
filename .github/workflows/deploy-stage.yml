@@ -1,0 +1,53 @@
+name: Deploy Frontend - Stage
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  consecutiveness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mktcode/consecutive-workflow-action@7b2cc9ff738d95ff2c8e4030db15b8c48ebb1ea1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          interval: 30
+
+  build-deploy:
+    needs: [consecutiveness]
+    uses: Rukkor/geometra-antd/.github/workflows/deploy.yml@master
+    with:
+      environment: stage
+      cloudfront_id: E1Z2WPTC4NB2GS
+      locize_project_id: 3e82a4db-f62c-451e-948f-8951b6bd86ff
+      locize_api_key: 3e73a957-5bc9-4274-ac7c-26bd8d4e31aa
+      react_app_version: 2020-02-dev
+      serverless_socket_url: wss://ws-sls.api.geometra.rukkor.io
+      react_app_node_url: https://stage.api.geometra.rukkor.io
+      node_socket_reconnection_delay: 2000
+      node_socket_reconnection_delay_max: 10000
+      ifc_conversion_bucket_url: https://rukkor-bimerconverter-out-prod.s3.amazonaws.com/
+      storage_bucket_url: https://geometra3.s3.eu-west-1.amazonaws.com/
+      auth0_url: https://rest-sls.api.geometra.rukkor.io/
+    secrets:
+      aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # trigger-backend-deployment:
+  #     needs: [build]
+  #     runs-on: ubuntu-latest
+  #     steps:
+  #         - name: Invoke backend deployment
+  #           uses: benc-uk/workflow-dispatch@v1
+  #           with:
+  #               workflow: Deploy Backend - Stage
+  #               repo: Rukkor/geometra-server
+  #               ref: master
+  #               token: ${{ secrets.PERSONAL_TOKEN }}
+
+  bundle-refresh:
+    needs: [build-deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Frontend Refresh
+        run: curl https://stage.api.geometra.rukkor.io/frontendBundleRefresh?token=${{ secrets.FRONTEND_REFRESH_TOKEN }}

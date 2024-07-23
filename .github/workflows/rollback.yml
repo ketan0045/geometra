@@ -1,0 +1,52 @@
+name: Rollback production to specified tag release
+
+on:
+  workflow_dispatch:
+    tag:
+      description: "Tag to whitch to change, example: 4.1.15"
+      required: true
+      type: string
+
+env:
+  APPLICAION_NAME: geometra-4-server
+  ENVIRONMENT_NAME: geometra-4-server-prod
+  CLOUDFRONT_ID: E3QH12Q1L53FUL
+  BACKUP_BUCKET_NAME: geometra-4-website-backup
+  BUCKET_NAME: geometra-4-host-prod
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check provided tag
+        run: |
+          [[ "${{ github.event.inputs.tag }}" =~ ^[0-9]*\.[0-9]*\.[0-9]*$ ]] || exit 1
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Get backend version label of this tag
+        run: |
+          BE_VERSION_LABEL=$(aws elasticbeanstalk describe-application-versions --application-name ${{ env.APPLICAION_NAME }} --output json \
+          | jq --arg version_label "^GHA-BE-PROD-.*${{ github.event.inputs.tag }}$" '.ApplicationVersions[] | select(.VersionLabel | test($version_label)) | .VersionLabel') \
+          >> $GITHUB_ENV
+
+      - name: Check for frontend release of this tag
+        run: |
+          [[ "$(${{ env.BE_VERSION_LABEL }} | wc -c)" -ne 0 ]] || exit 1
+
+      - name: Check for frontend release of this tag
+        run: |
+          [[ "$(aws s3 ls s3://${{ env.BACKUP_BUCKET_NAME }}/${{ github.event.inputs.tag }}/ | wc -c)" -ne 0 ]] || exit 1
+
+      - name: Switch frontend to specified version and invalidate
+        run: |
+          aws s3 sync --delete --no-progress s3://${{ env.BACKUP_BUCKET_NAME }}/${{ github.event.release.tag_name }}/ s3://${{ env.BUCKET_NAME }}
+          aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_ID }} --paths '/*'
+
+      - name: Switch backend to specified version
+        run: aws elasticbeanstalk update-environment --application-name ${{ env.APPLICAION_NAME }} --environment-name ${{ env.ENVIRONMENT_NAME }} --version-label ${{ env.BE_VERSION_LABEL }} --output json
